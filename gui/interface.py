@@ -18,6 +18,15 @@ LARGURA_MAPA = 17
 ALTURA_MAPA = 10   
 MAP_TYPES = ["Urbano", "Rural", "Misto"]
 
+# Constantes de Caminho das Imagens (Assumindo que estão na raiz)
+MAPA_URBANO_PATH = "1001562711.png" 
+MAPA_RURAL_PATH = "1001562713.png" 
+MAPA_MISTO_PATH = "1001562712.png" 
+URBANO_TYPE = "Urbano"
+RURAL_TYPE = "Rural" 
+MISTO_TYPE = "Misto" 
+
+
 class InterfaceDrone:
     """Interface gráfica principal com design de Abas (ttk.Notebook)."""
 
@@ -35,14 +44,13 @@ class InterfaceDrone:
         self.style.configure('TButton', font=('Inter', 12, 'bold'), background='#42A5F5', foreground='white', borderwidth=0, padding=12)
         
         # ESTILO DAS SETAS (Botões de Navegação) - AZUL ELÉTRICO
-        # A lógica de borda arredondada que causava o TclError foi REMOVIDA.
         self.style.configure('Arrow.TButton', 
                              font=('Inter', 16, 'bold'), 
-                             background='#007BFF',   # Azul Elétrico Base
-                             foreground='black',      # Cor do Texto (Seta)
+                             background='#007BFF',   
+                             foreground='white',      
                              width=4)
         self.style.map('Arrow.TButton', 
-                       background=[('active', '#0056B3')], # Azul Escuro (Ao Clicar)
+                       background=[('active', '#0056B3')], 
                        relief=[('pressed', 'groove')])
 
         self.style.configure("green.Horizontal.TProgressbar", foreground='green', background='green', thickness=20)
@@ -65,6 +73,12 @@ class InterfaceDrone:
         self.environmental_map_data = {}
         self._initialize_environmental_map(self.map_type)
 
+        # Carregamento de Imagens
+        self.background_images_pil = {}
+        self.background_image_tk = None 
+        self._load_all_map_images()
+
+
         # Estrutura principal com Abas (Notebook)
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(expand=True, fill='both', padx=10, pady=10)
@@ -82,9 +96,42 @@ class InterfaceDrone:
         self._setup_telemetria_tab()
         self._setup_relatorios_tab()
 
+        # -------------------------------------------------------------
+        # CORREÇÃO DO ERRO: Agendar o desenho para depois do layout
+        # -------------------------------------------------------------
+        self._agendar_desenho_inicial()
+
+
+    def _agendar_desenho_inicial(self):
+        """
+        Agenda a primeira chamada de desenho para depois que o Tkinter
+        tiver tempo de calcular as dimensões do Canvas (atraso de 100ms).
+        """
+        # Agendamento seguro com root.after para evitar ValueError
+        self.root.after(100, self._executar_desenho_inicial)
+
+    def _executar_desenho_inicial(self):
+        """Executa o desenho do mapa e a atualização da telemetria."""
         self.on_canvas_resize(None)
         self.update_telemetry_display()
         self.exibir_relatorio(initial_load=True)
+
+    def _load_all_map_images(self):
+        """Carrega todas as imagens de mapa na memória PIL."""
+        self.background_images_pil = {}
+        map_paths = {
+            URBANO_TYPE: MAPA_URBANO_PATH,
+            RURAL_TYPE: MAPA_RURAL_PATH,
+            MISTO_TYPE: MAPA_MISTO_PATH 
+        }
+
+        for map_type, path in map_paths.items():
+            try:
+                self.background_images_pil[map_type] = Image.open(path)
+            except FileNotFoundError:
+                print(f"AVISO: Imagem do mapa '{path}' não encontrada. O mapa {map_type} usará fundo padrão.")
+            except Exception as e:
+                print(f"ERRO: Não foi possível carregar a imagem {path}: {e}")
 
     def _setup_simulacao_tab(self):
         # Frame do Canvas (Mapa)
@@ -99,31 +146,34 @@ class InterfaceDrone:
         # Frame de Controles (abaixo do mapa)
         self.control_frame = ttk.Frame(self.tab_simulacao, padding=10, style='TFrame')
         self.control_frame.pack(side=tk.BOTTOM, fill='x', pady=10)
+        
+        # ⚠️ RECONFIGURAÇÃO DO GRID PARA 5 COLUNAS (Layout Horizontal)
         self.control_frame.grid_columnconfigure(0, weight=1); self.control_frame.grid_columnconfigure(1, weight=1)
         self.control_frame.grid_columnconfigure(2, weight=1); self.control_frame.grid_columnconfigure(3, weight=1)
+        self.control_frame.grid_columnconfigure(4, weight=1) 
 
         # Seleção de Mapa
-        ttk.Label(self.control_frame, text="Tipo de Mapa:", font=('Inter', 10, 'bold'), background='#34495e', foreground='#E0E0E0').grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.map_combobox = ttk.Combobox(self.control_frame, values=MAP_TYPES, state="readonly", font=('Inter', 10), width=18)
+        ttk.Label(self.control_frame, text="Mapa:", font=('Inter', 10, 'bold'), background='#34495e', foreground='#E0E0E0').grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.map_combobox = ttk.Combobox(self.control_frame, values=MAP_TYPES, state="readonly", font=('Inter', 10), width=12)
         self.map_combobox.set(self.map_type)
         self.map_combobox.bind("<<ComboboxSelected>>", self.on_map_select)
         self.map_combobox.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
-        # Botões de Ação
+        # Botões de Ação na mesma Linha 0
         ttk.Button(self.control_frame, text="Iniciar Missão", command=self.iniciar_missao).grid(row=0, column=2, padx=5, pady=5, sticky="ew")
         ttk.Button(self.control_frame, text="Finalizar Missão", command=self.finalizar_missao).grid(row=0, column=3, padx=5, pady=5, sticky="ew")
+        ttk.Button(self.control_frame, text="Simulação Auto", command=self.simular_movimento_automatico).grid(row=0, column=4, padx=5, pady=5, sticky="ew")
+
 
         # Controles de Navegação (Centralizados)
         nav_frame = ttk.Frame(self.control_frame, style='TFrame')
-        nav_frame.grid(row=1, column=1, columnspan=2, pady=10)
+        nav_frame.grid(row=1, column=2, columnspan=2, pady=10) # Centralizado
         
         ttk.Button(nav_frame, text="↑", command=lambda: self.mover_drone(0, -1), style='Arrow.TButton').grid(row=0, column=1)
         ttk.Button(nav_frame, text="←", command=lambda: self.mover_drone(-1, 0), style='Arrow.TButton').grid(row=1, column=0)
         ttk.Label(nav_frame, text="MANUAL", background='#34495e', foreground='white', anchor='center').grid(row=1, column=1, padx=5)
         ttk.Button(nav_frame, text="→", command=lambda: self.mover_drone(1, 0), style='Arrow.TButton').grid(row=1, column=2)
         ttk.Button(nav_frame, text="↓", command=lambda: self.mover_drone(0, 1), style='Arrow.TButton').grid(row=2, column=1)
-
-        ttk.Button(self.control_frame, text="Simulação Automática", command=self.simular_movimento_automatico).grid(row=2, column=0, columnspan=1, padx=5, pady=5, sticky="ew")
 
 
     def _setup_telemetria_tab(self):
@@ -184,12 +234,12 @@ class InterfaceDrone:
         map_data = {}
         areas_possiveis = ["urbana", "residencial", "industrial", "rural", "mata", "zona de risco"]
         
-        if map_type == "Urbano":
-            weights = [40, 20, 30, 5, 0, 5] # Maior chance de Urbano
-        elif map_type == "Rural":
-            weights = [5, 5, 0, 50, 35, 5] # Maior chance de Rural
-        else: # Misto
-            weights = [15, 15, 15, 20, 20, 15] # Distribuição uniforme
+        if map_type == URBANO_TYPE:
+            weights = [40, 20, 30, 5, 0, 5] 
+        elif map_type == RURAL_TYPE:
+            weights = [5, 5, 0, 50, 35, 5] 
+        else: # MISTO_TYPE
+            weights = [15, 15, 15, 20, 20, 15] 
 
         for r in range(ALTURA_MAPA):
             for c in range(LARGURA_MAPA):
@@ -248,9 +298,32 @@ class InterfaceDrone:
         offset_x = (canvas_width - (self.current_cell_size * LARGURA_MAPA)) / 2
         offset_y = (canvas_height - (self.current_cell_size * ALTURA_MAPA)) / 2
 
-        default_cell_color = "#FFFFFF" 
-        
-        # 1. Desenha as células do fundo
+        # -----------------------------------------------------
+        # 1. Lógica de Imagem de Fundo (Para Urbano, Rural, Misto)
+        # -----------------------------------------------------
+        current_map_image = self.background_images_pil.get(self.map_type)
+        is_textured_map = bool(current_map_image)
+
+        if is_textured_map:
+            # Redimensiona a imagem para caber no grid
+            w = int(self.current_cell_size * LARGURA_MAPA)
+            h = int(self.current_cell_size * ALTURA_MAPA)
+            
+            # Note: A verificação w>0 e h>0 não é necessária aqui graças ao _agendar_desenho_inicial
+            resized_img = current_map_image.resize((w, h), Image.Resampling.LANCZOS)
+            self.background_image_tk = ImageTk.PhotoImage(resized_img)
+            
+            # Desenha a imagem como fundo
+            self.canvas.create_image(offset_x + w/2, offset_y + h/2, image=self.background_image_tk, anchor="center")
+            
+            default_cell_color = "" # Não usa cor de fundo
+            outline_color = "#555555"
+        else:
+            default_cell_color = "#FFFFFF" 
+            outline_color = "#BDC3C7"
+
+
+        # 2. Desenha as células e os pontos visitados (coloridos pela poluição)
         for linha in range(ALTURA_MAPA):
             for coluna in range(LARGURA_MAPA):
                 x0 = offset_x + coluna * self.current_cell_size
@@ -265,12 +338,20 @@ class InterfaceDrone:
                     for ponto in pontos:
                         if ponto.coordenadas == (coluna, linha):
                             _, cor_poluicao = ponto.categoria_poluicao()
-                            cor_celula = cor_poluicao 
+                            
+                            if is_textured_map:
+                                # Desenha um overlay semi-transparente sobre a imagem de fundo
+                                self.canvas.create_rectangle(x0, y0, x1, y1, fill=cor_poluicao, stipple='gray50', outline=outline_color, width=1)
+                                cor_celula = "" # Evita redesenhar o retângulo abaixo
+                            else:
+                                cor_celula = cor_poluicao 
                             break
                     
-                self.canvas.create_rectangle(x0, y0, x1, y1, fill=cor_celula, outline="#BDC3C7", width=1) 
+                # Desenha a célula padrão (se não for o mapa de fundo e não foi desenhado um overlay)
+                if cor_celula != "": 
+                    self.canvas.create_rectangle(x0, y0, x1, y1, fill=cor_celula, outline=outline_color, width=1) 
 
-        # 2. Desenha o caminho (linha azul)
+        # 3. Desenha o caminho percorrido (Lista Encadeada)
         if self.drone.missao_ativa and not self.drone.missao_ativa.pontos_voo.esta_vazia():
             path_coords = []
             pontos = self.drone.missao_ativa.pontos_voo.to_list()
@@ -283,16 +364,17 @@ class InterfaceDrone:
                 self.canvas.create_line(path_coords, fill="#3F51B5", width=3, smooth=True, tags="drone_path")
                 self.canvas.tag_lower("drone_path")
 
-        # 3. 🚁 DESENHAR O DRONE (IMAGEM)
+        # 4. 🚁 DESENHAR O DRONE (IMAGEM)
         drone_x_center = offset_x + self.x * self.current_cell_size + self.current_cell_size / 2
         drone_y_center = offset_y + self.y * self.current_cell_size + self.current_cell_size / 2
         
         try:
-            # Tenta pegar o caminho definido no drone.py, ou usa "drone.png" como padrão
-            caminho_imagem = getattr(self.drone, 'imagem_path', "drone.png")
+            # ⚠️ Tenta carregar "drone.png" (o ícone real)
+            caminho_imagem = "drone.png"
             
             if not os.path.exists(caminho_imagem):
-                raise FileNotFoundError(f"Imagem não encontrada: {caminho_imagem}")
+                # Se "drone.png" não existe, o código levanta um erro para cair no 'except'
+                raise FileNotFoundError(f"Imagem do drone ('{caminho_imagem}') não encontrada.")
 
             # Carrega e redimensiona
             tamanho_icone = int(self.current_cell_size * 0.8)
@@ -303,15 +385,20 @@ class InterfaceDrone:
             self.canvas.create_image(drone_x_center, drone_y_center, image=self.drone_icon_img, tags="drone_icon")
             
         except Exception as e:
-            # Fallback para o triângulo se der erro
-            print(f"Usando triângulo. Erro: {e}")
+            # Fallback para o triângulo/polígono se o arquivo não for encontrado
             drone_size = self.current_cell_size * 0.4
             pontos_drone = [
                 drone_x_center, drone_y_center - drone_size * 0.8,  
                 drone_x_center + drone_size * 0.6, drone_y_center + drone_size * 0.5, 
                 drone_x_center - drone_size * 0.6, drone_y_center + drone_size * 0.5  
             ]
+            # Desenha o fallback (triângulo vermelho)
             self.canvas.create_polygon(pontos_drone, fill="#FF0000", outline="#8B0000", width=1, tags="drone_icon")
+            self.canvas.create_oval(drone_x_center - drone_size/4, drone_y_center - drone_size/4, drone_x_center + drone_size/4, drone_y_center + drone_size/4, fill="#FFFFFF", tags="drone_center")
+        
+        self.canvas.tag_raise("drone_icon")
+        self.canvas.tag_raise("drone_center")
+
     
     # Lógica de Controle
     def iniciar_missao(self):
@@ -330,7 +417,7 @@ class InterfaceDrone:
         
         # Registro do Ponto Inicial
         env_data_start = self.environmental_map_data.get((self.x, self.y), {})
-        self.drone.registrar_ponto_voo(self.x, self.y, env_data_start) # Insere nó na ED
+        self.drone.registrar_ponto_voo(self.x, self.y, env_data_start) 
         
         self.desenhar_mapa()
         self.update_telemetry_display()
@@ -354,7 +441,7 @@ class InterfaceDrone:
             self.y = novo_y
             
             env_data = self.environmental_map_data.get((self.x, self.y), {})
-            self.drone.registrar_ponto_voo(self.x, self.y, env_data) # Insere nó na ED
+            self.drone.registrar_ponto_voo(self.x, self.y, env_data) 
             self.desenhar_mapa()
             self.update_telemetry_display()
         else:
@@ -387,10 +474,10 @@ class InterfaceDrone:
                 self.x = novo_x
                 self.y = novo_y
                 env_data = self.environmental_map_data.get((self.x, self.y), {})
-                self.drone.registrar_ponto_voo(self.x, self.y, env_data) # Insere nó na ED
+                self.drone.registrar_ponto_voo(self.x, self.y, env_data) 
                 self.desenhar_mapa()
                 self.update_telemetry_display()
-                self.root.after(300, lambda: _auto_move_step(step_count + 1)) # Pausa de 300ms
+                self.root.after(300, lambda: _auto_move_step(step_count + 1)) 
             else:
                 _auto_move_step(step_count + 1)
 
